@@ -1,0 +1,106 @@
+Parameters:
+  Name:
+    Type: String
+    Description: 'Name of pipeline, recipe, component, image and distribution.'
+  Account:
+    Type: String
+    Description: 'Account number you want to share your image with.'
+  Region:
+    Type: String
+    Description: 'Region you want your image to be shared with.'
+Resources:
+
+  ImageBuilderRecipe:
+      Type: AWS::ImageBuilder::ImageRecipe
+      Properties:
+        Components:
+          - ComponentArn: arn:aws:imagebuilder:eu-west-1:aws:component/stig-build-windows-high/1.1.0
+          - ComponentArn: arn:aws:imagebuilder:eu-west-1:aws:component/inspector-test-windows/1.0.1
+        Name: !Ref Name
+        ParentImage: arn:aws:imagebuilder:eu-west-1:aws:image/windows-server-2016-english-full-base-x86/2020.8.12
+        Version: 1.0.0
+
+  ImageBuilderDistribution:
+    Type: 'AWS::ImageBuilder::DistributionConfiguration'
+    Properties:
+      Distributions:
+        - AmiDistributionConfiguration:
+            Name: !Join ["-", [!Ref Name, "{{imagebuilder:buildDate}}"]]
+            AmiTags:
+              Share: true
+            LaunchPermissionConfiguration:
+                UserIds: [!Ref Account]
+          Region: !Ref Region
+      Name: !Ref Name
+
+  ImageBuilderInfraConfig:
+    Type: 'AWS::ImageBuilder::InfrastructureConfiguration'
+    Properties:
+      InstanceProfileName: !Ref ImageBuilderProfile
+      InstanceTypes:
+        - t2.micro
+      Name: !Ref Name
+      TerminateInstanceOnFailure: false
+
+  ImageBuilderPipeline:
+    Type: 'AWS::ImageBuilder::ImagePipeline'
+    Properties:
+      DistributionConfigurationArn: !Ref ImageBuilderDistribution
+      ImageRecipeArn: !Ref ImageBuilderRecipe
+      ImageTestsConfiguration:
+        ImageTestsEnabled: true
+        TimeoutMinutes: 60
+      InfrastructureConfigurationArn: !Ref ImageBuilderInfraConfig
+      Name: !Ref Name
+      Schedule:
+        PipelineExecutionStartCondition: EXPRESSION_MATCH_AND_DEPENDENCY_UPDATES_AVAILABLE
+        ScheduleExpression: cron(0 0 * * *)
+      Status: ENABLED
+
+  ImageBuilderImage:
+    Type: 'AWS::ImageBuilder::Image'
+    Properties:
+      ImageRecipeArn: !Ref ImageBuilderRecipe
+      InfrastructureConfigurationArn: !Ref ImageBuilderInfraConfig
+      DistributionConfigurationArn: !Ref ImageBuilderDistribution
+      ImageTestsConfiguration:
+        ImageTestsEnabled: true
+        TimeoutMinutes: 60
+
+  ImageBuilderRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      Path: /
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+                - imagebuilder.amazonaws.com
+            Action: 'sts:AssumeRole'
+      Policies:
+        - PolicyName: ImageBuilderPolicy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Sid: ImageBuilderPolicy
+                Effect: Allow
+                Action:
+                  - 'ec2:CreateTags'
+                  - 'ssm:SendCommand'
+                Resource: '*'
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore'
+        - 'arn:aws:iam::aws:policy/EC2InstanceProfileForImageBuilder'
+        - 'arn:aws:iam::aws:policy/AmazonInspectorFullAccess'
+        - 'arn:aws:iam::aws:policy/AmazonS3FullAccess'
+
+  ImageBuilderProfile:
+    Type: 'AWS::IAM::InstanceProfile'
+    Properties:
+      InstanceProfileName: !Ref Name
+      Path: /
+      Roles:
+        - !Ref ImageBuilderRole
